@@ -1,7 +1,7 @@
 
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup4
+from bs4 import BeautifulSoup
 import time
 import smtplib
 import schedule
@@ -9,7 +9,7 @@ import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-def fetch_jobs(keywords, locations):
+def fetch_jobs(keywords, locations, companies):
     results = []
     base_url = "https://www.indeed.fr/jobs?q={query}&l={location}"
 
@@ -25,14 +25,19 @@ def fetch_jobs(keywords, locations):
             soup = BeautifulSoup(response.text, 'html.parser')
             job_cards = soup.find_all('a', class_="tapItem")
 
-            for job in job_cards[:5]:
+            for job in job_cards[:10]:
                 title = job.find('h2').text.strip() if job.find('h2') else "No title"
+                company = job.find('span', class_='companyName')
+                company_name = company.text.strip() if company else "Unknown"
                 link = "https://www.indeed.fr" + job['href']
-                results.append({
-                    "title": title,
-                    "location": location,
-                    "link": link
-                })
+
+                if not companies or any(c.lower() in company_name.lower() for c in companies):
+                    results.append({
+                        "title": title,
+                        "company": company_name,
+                        "location": location,
+                        "link": link
+                    })
             time.sleep(1)
     return results
 
@@ -47,7 +52,7 @@ def send_email(to_email, job_list):
 
     html_content = "<h3>Today's Job Listings:</h3><ul>"
     for job in job_list:
-        html_content += f"<li><strong>{job['title']}</strong> – {job['location']}<br><a href='{job['link']}'>View Listing</a></li><br>"
+        html_content += f"<li><strong>{job['title']}</strong> at <em>{job['company']}</em> – {job['location']}<br><a href='{job['link']}'>View Listing</a></li><br>"
     html_content += "</ul>"
 
     msg.attach(MIMEText(html_content, "html"))
@@ -62,9 +67,9 @@ def send_email(to_email, job_list):
         print("Email failed:", e)
         return False
 
-def start_scheduler(email, keywords, locations):
+def start_scheduler(email, keywords, locations, companies):
     def job_task():
-        job_data = fetch_jobs(keywords, locations)
+        job_data = fetch_jobs(keywords, locations, companies)
         if job_data:
             send_email(email, job_data)
 
@@ -81,7 +86,7 @@ def start_scheduler(email, keywords, locations):
 
 st.set_page_config(page_title="Job Finder – Basan Groupe", layout="centered")
 st.title("🔎 French-speaking Job Finder")
-st.markdown("Find caregiver, hospital, and housekeeper jobs in French-speaking countries. Receive daily updates by email!")
+st.markdown("Find trending jobs in French-speaking countries. Filter by company and category. Receive daily updates by email!")
 
 job_categories = {
     "Aide-soignant(e)": "aide soignante",
@@ -93,7 +98,12 @@ job_categories = {
     "Cuisinier / Cuisinière": "cuisinier",
     "Serveur / Serveuse": "serveur",
     "Réceptionniste": "réceptionniste",
-    "Ouvrier du bâtiment": "ouvrier bâtiment"
+    "Ouvrier du bâtiment": "ouvrier bâtiment",
+    "Infirmier / Infirmière": "infirmier",
+    "Technicien / Technicienne": "technicien",
+    "Assistant administratif": "assistant administratif",
+    "Employé de supermarché": "employé supermarché",
+    "Agent d'entretien": "agent d'entretien"
 }
 
 selected_jobs = st.multiselect(
@@ -104,25 +114,28 @@ selected_jobs = st.multiselect(
 
 keywords = [job_categories[job] for job in selected_jobs]
 
-locations_input = st.text_input("Enter locations (comma-separated)", "France, Belgique, Suisse")
-user_email = st.text_input("Enter your email to receive daily job alerts", "")
+locations_input = st.text_input("🌍 Enter locations (comma-separated)", "France, Belgique, Suisse")
+companies_input = st.text_input("🏢 Enter preferred companies (optional, comma-separated)", "")
+user_email = st.text_input("✉️ Enter your email to receive daily job alerts", "")
 
 if st.button("Search Jobs Now"):
     locations = [l.strip() for l in locations_input.split(',')]
-    jobs = fetch_jobs(keywords, locations)
+    companies = [c.strip() for c in companies_input.split(',')] if companies_input else []
+    jobs = fetch_jobs(keywords, locations, companies)
     if jobs:
         st.success(f"{len(jobs)} jobs found!")
         for job in jobs:
-            st.markdown(f"**{job['title']}** – {job['location']}")
+            st.markdown(f"**{job['title']}** at *{job['company']}* – {job['location']}")
             st.markdown(f"[View Listing]({job['link']})")
             st.markdown("---")
     else:
-        st.warning("No jobs found. Try different keywords or locations.")
+        st.warning("No jobs found. Try different filters or locations.")
 
 if st.button("Start Daily Email Notifications"):
     if user_email:
         locations = [l.strip() for l in locations_input.split(',')]
-        start_scheduler(user_email, keywords, locations)
+        companies = [c.strip() for c in companies_input.split(',')] if companies_input else []
+        start_scheduler(user_email, keywords, locations, companies)
         st.success(f"📧 Daily email alerts scheduled for {user_email}")
     else:
         st.error("Please enter a valid email address.")
